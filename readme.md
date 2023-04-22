@@ -9,3 +9,5 @@ In the config file make sure you put absolute paths. Otherwise the code wont wor
 - Add soft body simulation to the animation (https://www.youtube.com/watch?v=mc4so2VyyPE)
 - Add non-square images resolution
 - Add an image of the rendering / animation this produces. 
+- Change EXR format to something a little less data hungry 
+- add option for segmentation. 
