@@ -1,0 +1,14 @@
+# where is the asset you want to load
+asset_path: "/Users/jtremblay/Downloads/abe_CoverToStand/abe_CoverToStand.fbx"
+# where to output data
+output_path: "/Users/jtremblay/code/blender_animation/output/"
+# camera x,y,z
+camera_position: [1.5477,1.10554, 2.20848]
+# camera rotation in euler angle x,y,z in degrees 
+camera_euler_angle: [59.5244,0.716649,136.523]
+# output image resolution
+resolution: 512 
+# percentage of the speed you want the animation to be at. 
+speed_animation_factor: 0.25
+#random see
+seed: 100101
