@@ -1,8 +1,10 @@
 import sys
+
 with open("path.txt") as file:
     paths = eval(file.read())
 for p in paths:
     sys.path.insert(0,p)
+
 import argparse, sys, os, math, re
 import bpy
 from mathutils import Vector, Matrix
@@ -12,15 +14,26 @@ import json
 import random 
 import glob 
 import threading
+import yaml 
 
-
-from yourdfpy import URDF
-import yourdfpy
-import random 
-import pyrr 
-import scipy 
 from utils import * 
+import argparse
 
+
+parser = argparse.ArgumentParser(description='rendering')
+parser.add_argument(
+    '--config', 
+    type=str, 
+    default='config/abe_CoverToStand.yaml',
+    help='path to config'
+)    
+argv = sys.argv[sys.argv.index("--") + 1:]
+opt = parser.parse_args(argv)
+
+with open(opt.config, 'r') as file:
+    cfg = yaml.safe_load(file)
+
+os.makedirs(cfg['output_path'],exist_ok=True)
 
 ##### CLEAN BLENDER SCENES ##### 
 bpy.ops.object.delete()
@@ -28,7 +41,7 @@ bpy.ops.object.delete()
 bpy.data.objects['Light'].select_set(True)
 bpy.ops.object.delete()
 
-RESOLUTION = 512
+RESOLUTION = cfg['resolution']
 ##### SET THE RENDERER ######
 render = bpy.context.scene.render
 render.engine = "CYCLES"
@@ -53,7 +66,7 @@ bpy.context.scene.cycles.use_denoising = True
 bpy.data.worlds["World"].node_tree.nodes["Background"].inputs[1].default_value = 0
 bpy.context.scene.render.film_transparent = True
 
-bpy.ops.import_scene.fbx( filepath = "/Users/jtremblay/Downloads/abe_CoverToStand/abe_CoverToStand.fbx" )
+bpy.ops.import_scene.fbx( filepath = cfg['asset_path'] )
 
 
 
@@ -71,7 +84,7 @@ for c in curves:
     for kf in keyframes:
         #this is the number to scale by, 
         #if  you want to scale them all down by half then you'd divide by two
-        scale_factor = 0.25
+        scale_factor = max(0,float(cfg['speed_animation_factor']))
         # co is the keyframe's coordinate attribute
         # we only want to scale them on the x-axis (time) 
         # not on the y (amplitude)
@@ -81,8 +94,8 @@ for c in curves:
 
 
 
-random.seed(100101)
-np.random.seed(100101)
+random.seed(cfg['seed'])
+np.random.seed(cfg['seed'])
 
 
 # get keyframes of object list
@@ -124,10 +137,10 @@ scene = bpy.context.scene
 render = bpy.context.scene.render
 
 cam = scene.objects['Camera']
-cam.location = (1.5477,1.10554, 2.20848)  # radius equals to 1
-cam.rotation_euler.x = 59.5244 *np.pi/180
-cam.rotation_euler.y = 0.716649 *np.pi/180
-cam.rotation_euler.z = 136.523 *np.pi/180 
+cam.location = cfg['camera_position']  # radius equals to 1
+cam.rotation_euler.x = cfg["camera_euler_angle"][0] *np.pi/180
+cam.rotation_euler.y = cfg["camera_euler_angle"][1] *np.pi/180
+cam.rotation_euler.z = cfg["camera_euler_angle"][2] *np.pi/180 
 
 cam.data.lens = 35
 cam.data.sensor_width = 32
@@ -189,7 +202,7 @@ for f in range(bpy.context.scene.frame_start, bpy.context.scene.frame_end+1):
     frames[f-1] = data
     # break
 
-with open("/Users/jtremblay/code/mvs_objaverse/tmp/pose_bones.json", 'w+') as fp:
+with open(f"{cfg['output_path']}pose_bones.json", 'w+') as fp:
     json.dump(frames, fp, indent=4, sort_keys=True)
 
 
@@ -214,7 +227,7 @@ bpy.ops.object.mode_set(mode='OBJECT')
 
 make_segmentation_scene()
 
-bpy.ops.wm.save_as_mainfile(filepath=f"/Users/jtremblay/code/mvs_objaverse/bowen.blend")
+bpy.ops.wm.save_as_mainfile(filepath=f"{cfg['output_path']}/scene.blend")
 
 # raise()
 
@@ -235,7 +248,7 @@ for i in range(keys[-1]+1):
     render_single_image(
         frame_set = i,
         look_at_data=None,
-        path = "/Users/jtremblay/code/mvs_objaverse/tmp/",
+        path = cfg['output_path'],
         resolution = RESOLUTION,
         )
 
@@ -249,7 +262,7 @@ for i in range(keys[-1]+1):
     #     )
 
     bpy.ops.export_scene.obj(
-        filepath=f"/Users/jtremblay/code/mvs_objaverse/tmp/{str(i).zfill(3)}.obj",
+        filepath=f"{cfg['output_path']}/{str(i).zfill(3)}.obj",
         use_materials=False,
         axis_up='Z',
         axis_forward="Y",

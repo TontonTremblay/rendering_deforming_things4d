@@ -14,12 +14,6 @@ import glob
 import threading
 
 
-from yourdfpy import URDF
-import yourdfpy
-import random 
-import pyrr 
-import scipy 
-
 # global variable
 DATA_EXPORT = {}
 depth_file_output = None
@@ -41,91 +35,7 @@ def make_obj_emissive(obj, color):
     else:
         obj.data.materials.append(new_mat)
 
-def get_all_child(ob,to_return = []):
-    if len(ob.children) == 0: 
-        return [ob]
-    to_add = []
-    for child in ob.children:
-        to_add += [ob]
-        to_add += get_all_child(child)
-    return to_add
-    
-def add_annotation(obj_parent,transform_apply=False,
-    link_name = None,
-    data_parent = None, 
-    data_child = None,
-    empty = False
-    ): 
-    global DATA_EXPORT
 
-    DATA_EXPORT[obj_parent.name] = {}
-
-    if not data_parent is None: 
-        if not link_name == 'world':
-
-            DATA_EXPORT[obj_parent.name]['parent'] = data_parent[obj_parent.name]        
-            DATA_EXPORT[obj_parent.name]['name_link'] = link_name
-        else: 
-            DATA_EXPORT[obj_parent.name]['parent'] = None        
-            DATA_EXPORT[obj_parent.name]['name_link'] = link_name
-    if empty is False:
-        mesh_objs = []
-        for obj in get_all_child(obj_parent):
-            print(obj.name,obj.type)
-            if not obj.type == 'MESH':
-                continue
-            mesh_objs.append(obj)
-        
-        corners = []
-
-        for ob in mesh_objs:
-            ob.select_set(True)
-            bpy.context.view_layer.objects.active = ob
-            if transform_apply:
-                bpy.ops.object.transform_apply(location=True, rotation=True, scale=True)
-            bbox_corners = [ob.matrix_world @ Vector(corner)  for corner in ob.bound_box]
-            bbox_corners = [Vector(corner)  for corner in ob.bound_box]
-            
-            for corn in bbox_corners:
-                corners.append([corn.x,corn.y,corn.z])
-
-        corners = np.array(corners)
-
-        # bpy.ops.mesh.primitive_ico_sphere_add(scale=(0.1,0.1,0.1),location=(np.min(corners[:,0]),np.min(corners[:,1]),np.min(corners[:,2])))
-        # bpy.ops.mesh.primitive_ico_sphere_add(scale=(0.1,0.1,0.1),location=(np.max(corners[:,0]),np.max(corners[:,1]),np.max(corners[:,2])))
-        mina = [np.min(corners[:,0]),np.min(corners[:,1]),np.min(corners[:,2])]
-        maxb = [np.max(corners[:,0]),np.max(corners[:,1]),np.max(corners[:,2])]
-        # center_point = Vector(((minA.x + maxB.x)/2, (minA.y + maxB.y)/2, (minA.z + maxB.z)/2))
-        center_point = Vector(((mina[0] + maxb[0])/2, (mina[1] + maxb[1])/2, (mina[2] + maxb[2])/2))
-        # bpy.ops.mesh.primitive_ico_sphere_add(scale=(0.1,0.1,0.1),location=(center_point))
-        # center_point = 
-        dimensions =  Vector((maxb[0] - mina[0], maxb[1] - mina[1], maxb[2] - mina[2]))
-        max_obj = maxb
-        min_obj = mina
-        centroid_obj = center_point
-
-        cuboid = [
-            (max_obj[0], min_obj[1], max_obj[2]),
-            (min_obj[0], min_obj[1], max_obj[2]),
-            (min_obj[0], max_obj[1], max_obj[2]),
-            (max_obj[0], max_obj[1], max_obj[2]),
-            (max_obj[0], min_obj[1], min_obj[2]),
-            (min_obj[0], min_obj[1], min_obj[2]),
-            (min_obj[0], max_obj[1], min_obj[2]),
-            (max_obj[0], max_obj[1], min_obj[2]),
-            (centroid_obj[0], centroid_obj[1], centroid_obj[2]),
-        ]    
-
-        for ip, p in enumerate(cuboid):
-            bpy.ops.object.empty_add(radius=0.05,location=p)
-            ob = bpy.context.object
-            ob.name = f'{ip}_{obj_parent.name}'
-            ob.parent = obj_parent
-
-        DATA_EXPORT[obj_parent.name]['cuboid'] = cuboid 
-        bpy.ops.object.select_all(action='DESELECT') 
-    else:
-        DATA_EXPORT[obj_parent.name]['cuboid'] = None 
 
 def add_light_under(obj,dist = 0.01,power=5): 
     light_data = bpy.data.lights.new(name=obj.name+"_light", type='POINT')
@@ -136,9 +46,6 @@ def add_light_under(obj,dist = 0.01,power=5):
     light_object.parent = obj
     # raise()
 
-def update_object_poses():
-    # get scenes
-    pass 
 
 def make_segmentation_scene(scene_name='segmentation'):
     global DATA_EXPORT, depth_file_output, flow_file_output
@@ -329,79 +236,6 @@ def get_calibration_matrix_K_from_blender(camd):
 
     return K
 
-# Returns camera rotation and translation matrices from Blender.
-# 
-# There are 3 coordinate systems involved:
-#    1. The World coordinates: "world"
-#       - right-handed
-#    2. The Blender camera coordinates: "bcam"
-#       - x is horizontal
-#       - y is up
-#       - right-handed: negative z look-at direction
-#    3. The desired computer vision camera coordinates: "cv"
-#       - x is horizontal
-#       - y is down (to align to the actual pixel coordinates 
-#         used in digital images)
-#       - right-handed: positive z look-at direction
-
-# Function taken from https://github.com/zhenpeiyang/HM3D-ABO/blob/master/my_blender.py
-# def get_calibration_matrix_K_from_blender(camd):
-#     scene = bpy.context.scene
-
-#     scale = scene.render.resolution_percentage / 100
-#     width = scene.render.resolution_x * scale # px
-#     height = scene.render.resolution_y * scale # px
-
-#     camdata = camd
-
-
-#     aspect_ratio = width / height
-#     K = np.zeros((3,3), dtype=np.float32)
-#     K[0][0] = width / 2 / np.tan(camdata.angle / 2)
-#     K[1][1] = height / 2. / np.tan(camdata.angle / 2) * aspect_ratio
-#     K[0][2] = width / 2.
-#     K[1][2] = height / 2.
-#     K[2][2] = 1.
-#     K.transpose()
-    
-#     return K 
-
-    # f_in_mm = camd.lens
-    # scene = bpy.context.scene
-    # resolution_x_in_px = scene.render.resolution_x
-    # resolution_y_in_px = scene.render.resolution_y
-    # scale = scene.render.resolution_percentage / 100
-    # sensor_width_in_mm = camd.sensor_width
-    # sensor_height_in_mm = camd.sensor_height
-    # pixel_aspect_ratio = scene.render.pixel_aspect_x / scene.render.pixel_aspect_y
-
-    # if (camd.sensor_fit == 'VERTICAL'):
-    #     # the sensor height is fixed (sensor fit is horizontal), 
-    #     # the sensor width is effectively changed with the pixel aspect ratio
-    #     s_u = resolution_x_in_px * scale / sensor_width_in_mm / pixel_aspect_ratio 
-    #     s_v = resolution_y_in_px * scale / sensor_height_in_mm
-    #     print('here')
-    #     raise()
-    # else: # 'HORIZONTAL' and 'AUTO'
-    #     # the sensor width is fixed (sensor fit is horizontal), 
-    #     # the sensor height is effectively changed with the pixel aspect ratio
-    #     pixel_aspect_ratio = scene.render.pixel_aspect_x / scene.render.pixel_aspect_y
-    #     s_u = resolution_x_in_px * scale / sensor_width_in_mm
-    #     s_v = resolution_y_in_px * scale * pixel_aspect_ratio / sensor_height_in_mm
-    #     print(s_u,s_v)
-    #     print('non')
-    #     raise()
-    # # Parameters of intrinsic calibration matrix K
-    # alpha_u = f_in_mm * s_u
-    # alpha_v = f_in_mm * s_v
-    # u_0 = resolution_x_in_px * scale / 2
-    # v_0 = resolution_y_in_px * scale / 2
-    # skew = 0 # only use rectangular pixels
-    # K = mathutils.Matrix(
-    #     ((alpha_u, skew,    u_0),
-    #     (    0  , alpha_v, v_0),
-    #     (    0  , 0,        1 )))
-    # return K
 
 # function taken from https://blender.stackexchange.com/questions/5210/pointing-the-camera-in-a-particular-direction-programmatically
 def look_at(obj, target, roll=0):
@@ -435,10 +269,6 @@ def look_at(obj, target, roll=0):
     obj.location = loc
 
 
-def add_data_export_link_structure(urdf):
-    global DATA_EXPORT
-
-    pass
 def export_meta_data_2_json(
     filename = "tmp.json", #this has to include path as well
     height = 500, 
