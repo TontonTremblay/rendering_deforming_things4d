@@ -1,6 +1,6 @@
 import sys
 
-with open("path.txt") as file:
+with open("/tmp/path.txt",'r') as file:
     paths = eval(file.read())
 for p in paths:
     sys.path.insert(0,p)
@@ -10,36 +10,43 @@ import bpy
 from mathutils import Vector, Matrix
 import mathutils
 import numpy as np
-import json 
-import random 
-import glob 
+import json
+import random
+import glob
 import threading
-import yaml 
+import yaml
 
-from utils import * 
+from utils import *
 import argparse
 
 
 parser = argparse.ArgumentParser(description='rendering')
 parser.add_argument(
-    '--config', 
-    type=str, 
+    '--config',
+    type=str,
     default='config/abe_CoverToStand.yaml',
     help='path to config'
-)    
+)
 argv = sys.argv[sys.argv.index("--") + 1:]
 opt = parser.parse_args(argv)
 
 with open(opt.config, 'r') as file:
     cfg = yaml.safe_load(file)
 
-os.makedirs(cfg['output_path'],exist_ok=True)
 
-##### CLEAN BLENDER SCENES ##### 
+path = cfg['output_path']
+cmd = f'rm -rf {path} && mkdir -p {path}/rgb {path}/depth {path}/seg {path}/flow'
+print(f"\n{cmd}\n\nPress c to continue\n")
+pdb.set_trace()
+os.system(cmd)
+
+
+##### CLEAN BLENDER SCENES #####
 bpy.ops.object.delete()
 # bpy.ops.objects['Light'].delete()
-bpy.data.objects['Light'].select_set(True)
-bpy.ops.object.delete()
+if 'Light' in bpy.data.objects:
+  bpy.data.objects['Light'].select_set(True)
+  bpy.ops.object.delete()
 
 RESOLUTION = cfg['resolution']
 ##### SET THE RENDERER ######
@@ -82,11 +89,11 @@ for c in curves:
     keyframes = c.keyframe_points
     #loop over every keyframe and divide their x coordinate by a scale factor
     for kf in keyframes:
-        #this is the number to scale by, 
+        #this is the number to scale by,
         #if  you want to scale them all down by half then you'd divide by two
         scale_factor = max(0,float(cfg['speed_animation_factor']))
         # co is the keyframe's coordinate attribute
-        # we only want to scale them on the x-axis (time) 
+        # we only want to scale them on the x-axis (time)
         # not on the y (amplitude)
         # /= is a shorthand for saying kf.co.x = kf.co.x / 2
         kf.co.x /= scale_factor
@@ -131,16 +138,22 @@ look_at_trans = []
 global DATA_EXPORT
 
 
-#### set up the camera 
+#### set up the camera
 context = bpy.context
 scene = bpy.context.scene
 render = bpy.context.scene.render
+
+if 'Camera' not in scene.objects:
+  cam = bpy.data.cameras.new("Camera")
+  ob = bpy.data.objects.new("Camera", cam)
+  scene.collection.objects.link(ob)
+  scene.camera = ob
 
 cam = scene.objects['Camera']
 cam.location = cfg['camera_position']  # radius equals to 1
 cam.rotation_euler.x = cfg["camera_euler_angle"][0] *np.pi/180
 cam.rotation_euler.y = cfg["camera_euler_angle"][1] *np.pi/180
-cam.rotation_euler.z = cfg["camera_euler_angle"][2] *np.pi/180 
+cam.rotation_euler.z = cfg["camera_euler_angle"][2] *np.pi/180
 
 cam.data.lens = 35
 cam.data.sensor_width = 32
@@ -181,7 +194,7 @@ for f in range(bpy.context.scene.frame_start, bpy.context.scene.frame_end+1):
         # bonePos = armature.matrix_world @ bone.matrix
         bonePos = armature.matrix_world @ bone.matrix
 
-        # add empty 
+        # add empty
         # bpy.ops.object.empty_add(location=[bonePos[0][-1],bonePos[1][-1],bonePos[2][-1]])
 
         # rt = cam.convert_space(matrix=bonePos, to_space='LOCAL')
@@ -225,7 +238,7 @@ bpy.ops.object.mode_set(mode='EDIT')
 bpy.ops.mesh.quads_convert_to_tris(quad_method='BEAUTY', ngon_method='BEAUTY')
 bpy.ops.object.mode_set(mode='OBJECT')
 
-make_segmentation_scene()
+make_segmentation_scene(path=cfg['output_path'])
 
 bpy.ops.wm.save_as_mainfile(filepath=f"{cfg['output_path']}/scene.blend")
 
@@ -240,8 +253,6 @@ bpy.ops.wm.save_as_mainfile(filepath=f"{cfg['output_path']}/scene.blend")
 # pose.bones[i].loc = pose.bones[i].localMatrix.translationPart()
 # pose.bones[i].quat = pose.bones[i].localMatrix.rotationPart().toQuat()
 # pose.bones[i].size = pose.bones[i].localMatrix.scalePart()
-
-
 
 
 for i in range(keys[-1]+1):

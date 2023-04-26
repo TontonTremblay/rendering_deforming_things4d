@@ -1,5 +1,5 @@
-import sys
-with open("path.txt") as file:
+import sys,pdb,cv2,imageio,shutil,subprocess
+with open("/tmp/path.txt") as file:
     paths = eval(file.read())
 for p in paths:
     sys.path.insert(0,p)
@@ -8,16 +8,17 @@ import bpy
 from mathutils import Vector, Matrix
 import mathutils
 import numpy as np
-import json 
-import random 
-import glob 
+import json
+import random
+import glob
 import threading
 
 
 # global variable
 DATA_EXPORT = {}
+rgb_node = None
 depth_file_output = None
-flow_file_output = None 
+flow_file_output = None
 
 def make_obj_emissive(obj, color):
     new_mat = bpy.data.materials.new(name="seg")
@@ -37,7 +38,7 @@ def make_obj_emissive(obj, color):
 
 
 
-def add_light_under(obj,dist = 0.01,power=5): 
+def add_light_under(obj,dist = 0.01,power=5):
     light_data = bpy.data.lights.new(name=obj.name+"_light", type='POINT')
     light_data.energy = power
     light_object = bpy.data.objects.new(name=obj.name+"_light", object_data=light_data)
@@ -47,8 +48,9 @@ def add_light_under(obj,dist = 0.01,power=5):
     # raise()
 
 
-def make_segmentation_scene(scene_name='segmentation'):
-    global DATA_EXPORT, depth_file_output, flow_file_output
+def make_segmentation_scene(scene_name='segmentation', path='/tmp'):
+    global DATA_EXPORT, depth_file_output, flow_file_output, rgb_node
+    os.makedirs(path, exist_ok=True)
 
     bpy.ops.scene.new(type='FULL_COPY')
     bpy.context.scene.name = scene_name
@@ -60,7 +62,7 @@ def make_segmentation_scene(scene_name='segmentation'):
     bpy.context.view_layer.use_pass_vector = True
     bpy.context.scene.render.image_settings.file_format="OPEN_EXR"
     bpy.context.scene.render.image_settings.compression=0
-    bpy.context.scene.render.image_settings.color_mode="RGBA"
+    bpy.context.scene.render.image_settings.color_mode="RGB"
     bpy.context.scene.render.image_settings.color_depth="32"
     bpy.context.scene.render.image_settings.exr_codec="NONE"
     bpy.context.scene.render.image_settings.use_zbuffer=True
@@ -77,8 +79,8 @@ def make_segmentation_scene(scene_name='segmentation'):
     for ob in to_change:
         while True:
             c = colorsys.hsv_to_rgb(
-                random.uniform(0,255)/255, 
-                random.uniform(200,255)/255, 
+                random.uniform(0,255)/255,
+                random.uniform(200,255)/255,
                 random.uniform(200,255)/255
                 )
             found = False
@@ -96,8 +98,8 @@ def make_segmentation_scene(scene_name='segmentation'):
     links = bpy.context.scene.world.node_tree.links
 
     c = colorsys.hsv_to_rgb(
-        random.uniform(0,255)/255, 
-        random.uniform(200,255)/255, 
+        random.uniform(0,255)/255,
+        random.uniform(200,255)/255,
         random.uniform(200,255)/255
         )
     c = [c[0],c[1],c[2],1]
@@ -105,9 +107,9 @@ def make_segmentation_scene(scene_name='segmentation'):
         links.remove(nodes.get("Background").inputs['Color'].links[0])
 
     nodes.get("Background").inputs['Strength'].default_value = 1
-    nodes.get("Background").inputs['Color'].default_value = c 
+    nodes.get("Background").inputs['Color'].default_value = c
 
-    # make the depth layer: 
+    # make the depth layer:
     bpy.context.scene.use_nodes = True
     tree = bpy.context.scene.node_tree
     links = tree.links
@@ -122,25 +124,41 @@ def make_segmentation_scene(scene_name='segmentation'):
     depth_file_output.label = 'Depth Output'
     links.new(render_layers.outputs['Depth'], depth_file_output.inputs[0])
     depth_file_output.format.file_format = "OPEN_EXR"
-    depth_file_output.base_path = '/'
+    depth_file_output.base_path = path
+    depth_file_output.file_slots[0].path = f'depth'
 
-    # flow - helped from blenderproc, thank you 
+    # flow - helped from blenderproc, thank you
     separate_rgba = tree.nodes.new('CompositorNodeSepRGBA')
     links.new(render_layers.outputs['Vector'], separate_rgba.inputs['Image'])
 
     combine_fwd_flow = tree.nodes.new('CompositorNodeCombRGBA')
     links.new(separate_rgba.outputs['B'], combine_fwd_flow.inputs['R'])
     links.new(separate_rgba.outputs['A'], combine_fwd_flow.inputs['G'])
-    
+
     flow_file_output = tree.nodes.new(type="CompositorNodeOutputFile")
     flow_file_output.label = 'Flow Output'
     links.new(combine_fwd_flow.outputs['Image'], flow_file_output.inputs[0])
     flow_file_output.format.file_format = "OPEN_EXR"
-    flow_file_output.base_path = '/'
+    flow_file_output.base_path = path
+    flow_file_output.file_slots[0].path = f'flow'
 
+    seg_node = tree.nodes.new('CompositorNodeOutputFile')   # seg
+    seg_node.format.file_format = 'OPEN_EXR'
+    seg_node.file_slots[0].path = f'seg'
+    links.new(render_layers.outputs['IndexOB'], seg_node.inputs[0])
 
-    node_viewer = tree.nodes.new('CompositorNodeViewer') 
-    node_viewer.use_alpha = False  
+    # rgb_node = tree.nodes.new('CompositorNodeOutputFile')   # rgb
+    # rgb_node.format.file_format = 'PNG'
+    # rgb_node.base_path = path
+    # rgb_node.file_slots[0].path = f'rgb'
+    # links.new(render_layers.outputs['Image'], rgb_node.inputs[0])
+
+    # rgb_node = tree.nodes.new('CompositorNodeViewer')
+    # rgb_node.use_alpha = False
+    # links.new(render_layers.outputs['Image'], rgb_node.inputs[0])
+
+    node_viewer = tree.nodes.new('CompositorNodeViewer')
+    node_viewer.use_alpha = False
     links.new(render_layers.outputs['Image'], node_viewer.inputs[0])
 
 
@@ -155,7 +173,7 @@ def get_3x4_RT_matrix_from_blender(cam):
     #     (0, 1, 0),
     #     (0, 0, 1)))
 
-    # Transpose since the rotation is object rotation, 
+    # Transpose since the rotation is object rotation,
     # and we want coordinate rotation
     # R_world2bcam = cam.rotation_euler.to_matrix().transposed()
     # T_world2bcam = -1*R_world2bcam @ location
@@ -166,7 +184,7 @@ def get_3x4_RT_matrix_from_blender(cam):
 
     # Convert camera location to translation vector used in coordinate changes
     # T_world2bcam = -1*R_world2bcam @ cam.location
-    # Use location from matrix_world to account for constraints:     
+    # Use location from matrix_world to account for constraints:
     T_world2bcam = -1*R_world2bcam @ location
 
     # # Build the coordinate transform matrix from world to computer vision camera
@@ -197,7 +215,7 @@ def get_sensor_fit(sensor_fit, size_x, size_y):
 
 # Build intrinsic camera parameters from Blender camera data
 #
-# See notes on this in 
+# See notes on this in
 # blender.stackexchange.com/questions/15102/what-is-blenders-camera-projection-matrix-model
 # as well as
 # https://blender.stackexchange.com/a/120063/3581
@@ -244,9 +262,9 @@ def look_at(obj, target, roll=0):
 
     :arg obj: the object to be rotated. Usually the camera
     :arg target: the location (3-tuple or Vector) to be looked at
-    :arg roll: The angle of rotation about the axis from obj to target in radians. 
+    :arg roll: The angle of rotation about the axis from obj to target in radians.
 
-    Based on: https://blender.stackexchange.com/a/5220/12947 (ideasman42)      
+    Based on: https://blender.stackexchange.com/a/5220/12947 (ideasman42)
     """
     if not isinstance(target, mathutils.Vector):
         target = mathutils.Vector(target)
@@ -255,7 +273,7 @@ def look_at(obj, target, roll=0):
     direction = target - loc
     tracker, rotator = (('-Z', 'Y'),'Z') if obj.type=='CAMERA' else (('X', 'Z'),'Y') #because new cameras points down(-Z), usually meshes point (-Y)
     quat = direction.to_track_quat(*tracker)
-    
+
     # /usr/share/blender/scripts/addons/add_advanced_objects_menu/arrange_on_curve.py
     quat = quat.to_matrix().to_4x4()
     rollMatrix = mathutils.Matrix.Rotation(roll, 4, rotator)
@@ -271,7 +289,7 @@ def look_at(obj, target, roll=0):
 
 def export_meta_data_2_json(
     filename = "tmp.json", #this has to include path as well
-    height = 500, 
+    height = 500,
     width = 500,
     camera_ob = None,
     camera_struct = None,
@@ -310,7 +328,7 @@ def export_meta_data_2_json(
         cam2wold.append(a)
     cam2wold.append([0,0,0,1])
 
-    cam_world_location = camera_ob.location 
+    cam_world_location = camera_ob.location
 
     cam_world_quaternion = camera_ob.rotation_euler.to_quaternion()
 
@@ -352,26 +370,26 @@ def export_meta_data_2_json(
                     # 'scene_min_3d_box':scene_aabb[0],
                     # 'scene_max_3d_box':scene_aabb[1],
                     # 'scene_center_3d_box':scene_aabb[2],
-                }, 
+                },
                 "objects" : []
             }
 
     # load the segmentation & find unique pixels
 
-    if not segmentation_mask is None or os.path.exists(f'{path}/{str(i_pos).zfill(3)}_seg.exr'):
-        segmentation_mask = bpy.data.images.load(f'{path}/{str(i_pos).zfill(3)}_seg.exr')
-        segmentation_mask = np.asarray(segmentation_mask.pixels)
-        segmentation_mask = segmentation_mask.reshape((width,height,4))[:,:,:3]
-        unique_pixels = np.vstack({tuple(r) for r in segmentation_mask.reshape(-1,3)})
-        unique_pixels = (unique_pixels*255).astype(int)
+    # if not segmentation_mask is None or os.path.exists(f'{path}/{str(i_pos).zfill(3)}_seg.exr'):
+    #     segmentation_mask = bpy.data.images.load(f'{path}/{str(i_pos).zfill(3)}_seg.exr')
+    #     segmentation_mask = np.asarray(segmentation_mask.pixels)
+    #     segmentation_mask = segmentation_mask.reshape((width,height,4))[:,:,:3]
+    #     unique_pixels = np.vstack({tuple(r) for r in segmentation_mask.reshape(-1,3)})
+    #     unique_pixels = (unique_pixels*255).astype(int)
 
 
     # Segmentation id to export
     import bpy_extras
     scene = bpy.context.scene
-    for obj_name in data.keys(): 
+    for obj_name in data.keys():
         projected_keypoints = []
-        
+
         obj = bpy.context.scene.objects[obj_name]
 
         if not data[obj_name]['cuboid'] is None:
@@ -380,8 +398,8 @@ def export_meta_data_2_json(
                     continue
 
                 co_2d = bpy_extras.object_utils.world_to_camera_view(
-                    bpy.context.scene, 
-                    camera_ob, 
+                    bpy.context.scene,
+                    camera_ob,
                     keypoint.matrix_world.translation
                 )
 
@@ -391,7 +409,7 @@ def export_meta_data_2_json(
                                int(scene.render.resolution_y * render_scale),
                             )
                 projected_keypoints.append([co_2d.x * render_size[0],height - co_2d.y * render_size[1]])
-     
+
             cuboid = data[obj_name]['cuboid']
         else:
             cuboid = None
@@ -402,7 +420,7 @@ def export_meta_data_2_json(
 
 
         # Using the bouding box keypoints wont give tight 2d bounding box
-        # use the segmentation mask instead. 
+        # use the segmentation mask instead.
         a = np.array(projected_keypoints)
         minx = min(a[:,0])
         miny = min(a[:,1])
@@ -416,15 +434,15 @@ def export_meta_data_2_json(
         #    (maxx>0 and maxx<width and miny>0 and miny<height ):
         #    visibility = 1
         # else:
-        #     visibility = 0 
-        if not cuboid is None:
-            color_int = (np.array(data[obj_name]['color_seg'])*255).astype(int)
-            if not segmentation_mask is None:
+        #     visibility = 0
+        # if not cuboid is None:
+        #     color_int = (np.array(data[obj_name]['color_seg'])*255).astype(int)
+        #     if not segmentation_mask is None:
 
-                if color_int in unique_pixels:
-                    visibility = 1
-                else:
-                    visibility = 0
+        #         if color_int in unique_pixels:
+        #             visibility = 1
+        #         else:
+        #             visibility = 0
 
         pos, rt, scale = obj.matrix_world.decompose()
         rt = rt.to_matrix()
@@ -436,7 +454,7 @@ def export_meta_data_2_json(
             a.append(pos[i])
             trans_matrix_export.append(a)
         trans_matrix_export.append([0,0,0,1])
-        
+
         rt = camera_ob.matrix_world.inverted() @ obj.matrix_world
 
         trans_matrix_cam_export = []
@@ -447,7 +465,7 @@ def export_meta_data_2_json(
             a.append(pos[i])
             trans_matrix_cam_export.append(a)
         trans_matrix_cam_export.append([0,0,0,1])
-        
+
 
         # Final export
         dict_out['objects'].append({
@@ -464,7 +482,6 @@ def export_meta_data_2_json(
             'trans_in_camera':trans_matrix_cam_export,
             'projected_cuboid':projected_keypoints,
             'local_cuboid': cuboid,
-            'visibility':visibility,
             'bounding_box_minx_maxx_miny_maxy':[minx,maxx,miny,maxy],
         })
         # dict_out['objects'][-1]['segmentation_id']=data[obj_name]["color_seg"]
@@ -480,7 +497,7 @@ def export_meta_data_2_json(
                 return float(obj)
             if isinstance(obj, np.ndarray):
                 a = obj.tolist()
-                for i in range(len(a)): 
+                for i in range(len(a)):
                     a[i] = float(a[i])
                 return a
             return json.JSONEncoder.default(self, obj)
@@ -495,7 +512,7 @@ def render_single_image(
     save_segmentation = True,
     save_depth = True,
     resolution = 500,
-    ): 
+    ):
     global DATA_EXPORT, depth_file_output,flow_file_output
     i_pos = frame_set
 
@@ -503,7 +520,7 @@ def render_single_image(
     bpy.context.scene.frame_set(frame_set)
 
     obj_camera = bpy.context.scene.objects['Camera.001']
-    
+
     if not look_at_data is None:
         obj_camera.location = (
             (look_at_data['eye'][0]),
@@ -515,14 +532,22 @@ def render_single_image(
 
         bpy.context.view_layer.update()
 
-    depth_file_output.file_slots[0].path = f'{path}/{str(i_pos).zfill(3)}_depth'
-    flow_file_output.file_slots[0].path = f'{path}/{str(i_pos).zfill(3)}_flow'
-    bpy.context.scene.render.filepath = f'{path}/{str(i_pos).zfill(3)}_seg.exr'
-    
+    # depth_file_output.file_slots[0].path = f'{path}/{str(i_pos).zfill(3)}_depth'
+    # flow_file_output.file_slots[0].path = f'{path}/{str(i_pos).zfill(3)}_flow'
+    bpy.context.scene.render.filepath = f'{path}/seg.exr'
+
+
+    # tree = bpy.context.scene.node_tree
+    # depth_file_output.base_path = path
+    # flow_file_output.base_path = path
+    # rgb_node.base_path = path
+    # depth_file_output.file_slots[0].path = f'depth'
+    # flow_file_output.file_slots[0].path = f'flow'
+    # rgb_node.file_slots[0].path = f'{str(i_pos).zfill(3)}_rgb'
+    # bpy.context.scene.render.filepath = f'{path}/{str(i_pos).zfill(3)}_seg.exr'
+
     bpy.ops.render.render(write_still = True)
 
-    os.rename(f'{path}/{str(i_pos).zfill(3)}_depth{str(bpy.context.window.scene.frame_current).zfill(4)}.exr', f'{path}/{str(i_pos).zfill(3)}_depth.exr') 
-    os.rename(f'{path}/{str(i_pos).zfill(3)}_flow{str(bpy.context.window.scene.frame_current).zfill(4)}.exr', f'{path}/{str(i_pos).zfill(3)}_flow.exr') 
 
     bpy.context.window.scene = bpy.data.scenes['Scene']
     bpy.context.scene.frame_set(frame_set)
@@ -535,12 +560,12 @@ def render_single_image(
             (look_at_data['eye'][2])
             )
         bpy.context.view_layer.update()
-        
+
         look_at(obj_camera,look_at_data['at'])
 
         bpy.context.view_layer.update()
 
-    # change the scene 
+    # change the scene
 
 
     export_meta_data_2_json(
@@ -555,7 +580,7 @@ def render_single_image(
         path = path,
         i_pos = i_pos,
     )
-    
+
     # if no depth or no segmentation to be saved.
     if not save_segmentation:
         os.remove(f'{path}/{str(i_pos).zfill(3)}_seg.exr')
@@ -589,6 +614,27 @@ def render_single_image(
         "file_path":f'{str(i_pos).zfill(3)}.png',
         "transform_matrix":matrix
     }
-    
-    bpy.context.scene.render.filepath = f'{path}/{str(i_pos).zfill(3)}.png'
+
+    bpy.context.scene.render.filepath = f'{path}/rgb.png'
     bpy.ops.render.render(write_still = True)
+
+    # pdb.set_trace()
+
+    file = glob.glob(f'{path}/*rgb*png')[0]
+    color = cv2.imread(file)[...,:3]
+    cv2.imwrite(f'{path}/rgb/{i_pos:03d}.png', color.astype(np.uint8))
+
+    seg_file = glob.glob(f'{path}/*seg*.exr')[0]
+    seg = cv2.imread(seg_file, -1)[...,0]
+    cv2.imwrite(f'{path}/seg/{i_pos:03d}.png', (seg>0).astype(np.uint8)*255)
+
+    depth_file = glob.glob(f'{path}/*depth*.exr')[0]
+    depth = cv2.imread(depth_file, -1)[...,0]
+    cv2.imwrite(f'{path}/depth/{i_pos:03d}.png', (depth*1000).astype(np.uint16))
+
+    flow_file = glob.glob(f'{path}/*flow*.exr')[0]
+    flow = cv2.imread(flow_file, -1)[...,::-1][...,:2]
+    flow[...,1] *= -1
+    np.save(f'{path}/flow/{i_pos:03d}.npy', flow.astype(np.float32))
+
+    os.system(f'rm -rf {path}/*depth*.exr {path}/*flow*.exr {path}/*seg*.exr {path}/*rgb*.png')

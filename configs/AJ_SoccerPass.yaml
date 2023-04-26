@@ -1,0 +1,14 @@
+# where is the asset you want to load
+asset_path: "/mnt/9a72c439-d0a7-45e8-8d20-d7a235d02763/DATASET/deformingthings4D/DeformingThings4D/humanoids/AJ_SoccerPass/AJ_SoccerPass.fbx"
+# where to output data
+output_path: "/home/bowen/debug/render_deforming_things/"
+# camera x,y,z
+camera_position: [-0.131269, -2.58971, 0.979321]
+# camera rotation in euler angle x,y,z in degrees
+camera_euler_angle: [88.4283, 2.98997, -3.87951]
+# output image resolution
+resolution: 512
+# percentage of the speed you want the animation to be at.
+speed_animation_factor: 0.25
+#random see
+seed: 100101
